@@ -1,0 +1,60 @@
+---
+apiVersion: "v1"
+kind: "Namespace"
+metadata:
+  name: "example_namespace"
+---
+apiVersion: "v1"
+kind: "ConfigMap"
+metadata:
+  name: "verifier_server-configmap"
+  namespace: "example_namespace"
+  labels:
+    app: "verifier_server"
+data:
+  ADMIN_SECRET: "topsecretpassword"
+---
+apiVersion: "apps/v1"
+kind: "Deployment"
+metadata:
+  name: "verifier_server"
+  namespace: "example_namespace"
+  labels:
+    app: "verifier_server"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: "verifier_server"
+  template:
+    metadata:
+      labels:
+        app: "verifier_server"
+    spec:
+      containers:
+      - name: "verifier_server"
+        image: "gcr.io/pure-spirit-243501/web:latest"
+        env:
+        - name: "ADMIN_SECRET"
+          valueFrom:
+            configMapKeyRef:
+              key: "ADMIN_SECRET"
+              name: "verifier_server-configmap"
+# ADD SECURITY CONTEXT
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: verifier_server-service
+  namespace: example_namespace
+  labels:
+    app: "verifier_server"
+spec:
+  type: LoadBalancer
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8000
+  selector:
+    app: "verifier_server"
+
