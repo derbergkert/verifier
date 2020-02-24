@@ -1,9 +1,11 @@
 ---
+# Create a namespace to hold all of our stuff. This way, it's all safely isolated.
 apiVersion: "v1"
 kind: "Namespace"
 metadata:
   name: "example_namespace"
 ---
+# Config maps hold static data we want available to our apps. In this case, a password for accessing the server.
 apiVersion: "v1"
 kind: "ConfigMap"
 metadata:
@@ -14,6 +16,8 @@ metadata:
 data:
   ADMIN_SECRET: "topsecretpassword"
 ---
+# Deployment specification holds most of what we care about. It says were to launch our service, how to configure its
+# pod, as well as lots of other small things.
 apiVersion: "apps/v1"
 kind: "Deployment"
 metadata:
@@ -40,8 +44,8 @@ spec:
             configMapKeyRef:
               key: "ADMIN_SECRET"
               name: "verifier_server-configmap"
-# ADD SECURITY CONTEXT
 ---
+# Service defines how the deployment is exposed on the network for access.
 apiVersion: v1
 kind: Service
 metadata:
@@ -57,4 +61,6 @@ spec:
     targetPort: 8000
   selector:
     app: "verifier_server"
+---
+# Network policy goes here.
 

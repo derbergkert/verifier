@@ -1,4 +1,4 @@
-package search
+package predicates
 
 import (
 	"errors"
@@ -11,40 +11,71 @@ import (
 	"github.com/blevesearch/bleve/search/query"
 )
 
-// Filter represents a serializable query.
-type Filter struct {
-	Base string    `json:"base"`
-	And  []*Filter `json:"and"`
-	Or   []*Filter `json:"or"`
+// PredicateType
+type PredicateType int32
+
+const (
+	FIELD PredicateType = iota
+	CONJUNCT
+	DISJUNCT
+	NEGATE
+)
+
+// FieldType
+type FieldType int32
+
+const (
+	STRING FieldType = iota
+	NUMERICAL
+	DATETIME
+)
+
+// Predicate
+type Predicate struct {
+	Type PredicateType
+
+	Field   *FieldPredicate
+	And    []*Predicate `json:"and"`
+	Or     []*Predicate `json:"or"`
+	Negate *Predicate
 }
 
-// ParseFilters returns the AND of all the input filters.
-func ParseFilter(sFilter *Filter, index *Index) (query.Query, error) {
-	if sFilter == nil {
+// FieldPredicate
+type FieldPredicate struct {
+	Type FieldType
+
+	Field      string
+	Comparator string
+}
+
+// ParsePredicates converts a Predicate object into an executable function which takes in a JSON object and returns
+// an error message if the input object matched the predicate, which describes the matching fields.
+func ParsePredicate(sPredicate *Predicate) (func(map[string]interface{}) error, error) {
+	if sPredicate == nil {
 		return bleve.NewMatchAllQuery(), nil
 	}
 
-	if sFilter.Base != "" {
-		if len(sFilter.And) != 0 || len(sFilter.Or) != 0 {
-			return nil, errors.New("filter should be of a single type")
+	if sPredicate.Base != "" {
+		if len(sPredicate.And) != 0 || len(sPredicate.Or) != 0 {
+			return nil, errors.New("Predicate should be of a single type")
 		}
-		return ParseBaseFilter(sFilter.Base, index)
-	} else if len(sFilter.And) != 0 {
-		if sFilter.Or != nil {
-			return nil, errors.New("filter should be of a single type")
+		return ParseBasePredicate(sPredicate.Base, index)
+	} else if len(sPredicate.And) != 0 {
+		if sPredicate.Or != nil {
+			return nil, errors.New("Predicate should be of a single type")
 		}
-		return ParseAndFilter(sFilter.And, index)
-	} else if len(sFilter.Or) != 0 {
-		return ParseOrFilter(sFilter.Or, index)
+		return ParseAndPredicate(sPredicate.And, index)
+	} else if len(sPredicate.Or) != 0 {
+		return ParseOrPredicate(sPredicate.Or, index)
 	}
-	return nil, errors.New("empty filter")
+	return nil, errors.New("empty Predicate")
 }
 
-// ParseAndFilter parses the ANDs of a filter.
-func ParseAndFilter(andFilters []*Filter, index *Index) (query.Query, error) {
+// ParseAndPredicate parses the ANDs of a Predicate.
+func ParseAndPredicate(andPredicates []*Predicate, index *Index) (query.Query, error) {
 	var ands []query.Query
-	for _, filter := range andFilters {
-		q, err := ParseFilter(filter, index)
+	for _, Predicate := range andPredicates {
+		q, err := ParsePredicate(Predicate, index)
 		if err != nil {
 			return nil, err
 		}
@@ -56,11 +87,11 @@ func ParseAndFilter(andFilters []*Filter, index *Index) (query.Query, error) {
 	return bleve.NewConjunctionQuery(ands...), nil
 }
 
-// ParseOrFilter parses the ORs of a filter.
-func ParseOrFilter(orFilters []*Filter, index *Index) (query.Query, error) {
+// ParseOrPredicate parses the ORs of a Predicate.
+func ParseOrPredicate(orPredicates []*Predicate, index *Index) (query.Query, error) {
 	var ors []query.Query
-	for _, filter := range orFilters {
-		q, err := ParseFilter(filter, index)
+	for _, Predicate := range orPredicates {
+		q, err := ParsePredicate(Predicate, index)
 		if err != nil {
 			return nil, err
 		}
@@ -72,15 +103,15 @@ func ParseOrFilter(orFilters []*Filter, index *Index) (query.Query, error) {
 	return bleve.NewDisjunctionQuery(ors...), nil
 }
 
-// ParseBaseFilter parses a string formatted, single field, query.
-func ParseBaseFilter(baseFilter string, index *Index) (query.Query, error) {
-	fixes := strings.SplitN(baseFilter, ":", 2)
+// ParseBasePredicate parses a string formatted, single field, query.
+func ParseBasePredicate(basePredicate string, index *Index) (query.Query, error) {
+	fixes := strings.SplitN(basePredicate, ":", 2)
 	if len(fixes) != 2 {
-		return nil, fmt.Errorf("filter must have a field and value with ':' in between: %s", baseFilter)
+		return nil, fmt.Errorf("Predicate must have a field and value with ':' in between: %s", basePredicate)
 	}
 	for _, doc := range index.Documents {
 		if fType, hasField := doc.Fields[fixes[0]]; hasField {
-			return parseFilterOfType(fixes[0], fixes[1], fType)
+			return parsePredicateOfType(fixes[0], fixes[1], fType)
 		}
 	}
 	return nil, fmt.Errorf("cannot find indexed field: %s", fixes[0])
@@ -89,36 +120,36 @@ func ParseBaseFilter(baseFilter string, index *Index) (query.Query, error) {
 // Helper functions for parsing a string query.
 ///////////////////////////////////////////////
 
-func parseFilterOfType(prefix, suffix string, fType FType) (query.Query, error) {
+func parsePredicateOfType(prefix, suffix string, fType FType) (query.Query, error) {
 	switch fType {
 	case TEXT_FTYPE:
-		return parseTextFilter(prefix, suffix)
+		return parseTextPredicate(prefix, suffix)
 	case KEYWORD_FTYPE:
-		return parseKeywordFilter(prefix, suffix)
+		return parseKeywordPredicate(prefix, suffix)
 	case KEYWORD_LIST_FTYPE:
-		return parseKeywordFilter(prefix, suffix)
+		return parseKeywordPredicate(prefix, suffix)
 	case NUMBER_FTYPE:
-		return parseNumberFilter(prefix, suffix)
+		return parseNumberPredicate(prefix, suffix)
 	case DATE_FTYPE:
-		return parseDateFilter(prefix, suffix)
+		return parseDatePredicate(prefix, suffix)
 	default:
-		return nil, fmt.Errorf("cannot handle filter of type %d", fType)
+		return nil, fmt.Errorf("cannot handle Predicate of type %d", fType)
 	}
 }
 
-func parseTextFilter(prefix, suffix string) (query.Query, error) {
+func parseTextPredicate(prefix, suffix string) (query.Query, error) {
 	mq := bleve.NewMatchQuery(suffix)
 	mq.SetField(prefix)
 	return mq, nil
 }
 
-func parseKeywordFilter(prefix, suffix string) (query.Query, error) {
+func parseKeywordPredicate(prefix, suffix string) (query.Query, error) {
 	mq := bleve.NewMatchQuery(suffix)
 	mq.SetField(prefix)
 	return mq, nil
 }
 
-func parseNumberFilter(prefix, suffix string) (query.Query, error) {
+func parseNumberPredicate(prefix, suffix string) (query.Query, error) {
 	if strings.HasPrefix(suffix, "==") {
 		num, err := parseNum(strings.TrimPrefix(suffix, "=="))
 		if err != nil {
@@ -177,7 +208,7 @@ func parseNum(strNum string) (float64, error) {
 	return num, err
 }
 
-func parseDateFilter(prefix, suffix string) (query.Query, error) {
+func parseDatePredicate(prefix, suffix string) (query.Query, error) {
 	if strings.HasPrefix(suffix, "==") {
 		num, err := parseDate(strings.TrimPrefix(suffix, "=="))
 		if err != nil {
