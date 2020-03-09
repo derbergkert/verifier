@@ -3,153 +3,160 @@ package predicates
 import (
 	"errors"
 	"fmt"
+	"github.com/blevesearch/bleve"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/blevesearch/bleve"
-	"github.com/blevesearch/bleve/search/query"
 )
 
-// PredicateType
-type PredicateType int32
+// Predicate defines a function which takes in an object, and returns an error indicating some issue.
+// Super generic.
+type Predicate func(interface{}) bool
 
-const (
-	FIELD PredicateType = iota
-	CONJUNCT
-	DISJUNCT
-	NEGATE
-)
+// Predicate defines a function which takes in an object, and returns an error indicating some issue.
+// Super generic.
+type internalPredicate func(value reflect.Value) bool
 
-// FieldType
-type FieldType int32
-
-const (
-	STRING FieldType = iota
-	NUMERICAL
-	DATETIME
-)
-
-// Predicate
-type Predicate struct {
-	Type PredicateType
-
-	Field   *FieldPredicate
-	And    []*Predicate `json:"and"`
-	Or     []*Predicate `json:"or"`
-	Negate *Predicate
+type PredicateFactory interface {
+	Build(d *PredicateDescriptor) (Predicate, error)
 }
 
-// FieldPredicate
-type FieldPredicate struct {
-	Type FieldType
+func NewPredicateFactory(example interface{}) PredicateFactory {
+	return &predicateFactoryImpl{
+		example: example,
+	}
+}
 
-	Field      string
-	Comparator string
+type predicateFactoryImpl struct {
+	example interface{}
+}
+
+func (pf *predicateFactoryImpl) Build(d *PredicateDescriptor) (Predicate, error) {
+	internal, err :=  parsePredicate(pf.example, d)
+	if err != nil {
+		return nil, err
+	}
+	return func(input interface{}) bool {
+		return internal(reflect.ValueOf(input))
+	}, nil
 }
 
 // ParsePredicates converts a Predicate object into an executable function which takes in a JSON object and returns
 // an error message if the input object matched the predicate, which describes the matching fields.
-func ParsePredicate(sPredicate *Predicate) (func(map[string]interface{}) error, error) {
-	if sPredicate == nil {
-		return bleve.NewMatchAllQuery(), nil
+func parsePredicate(example interface{}, predD *PredicateDescriptor) (internalPredicate, error) {
+	if predD == nil {
+		return nil, errors.New("received a nil descriptor")
 	}
 
-	if sPredicate.Base != "" {
-		if len(sPredicate.And) != 0 || len(sPredicate.Or) != 0 {
+	if predD.Field != nil {
+		return parseFieldPredicate(example, predD)
+	} else if len(predD.And) != 0 {
+		if predD.Or != nil {
 			return nil, errors.New("Predicate should be of a single type")
 		}
-		return ParseBasePredicate(sPredicate.Base, index)
-	} else if len(sPredicate.And) != 0 {
-		if sPredicate.Or != nil {
-			return nil, errors.New("Predicate should be of a single type")
-		}
-		return ParseAndPredicate(sPredicate.And, index)
-	} else if len(sPredicate.Or) != 0 {
-		return ParseOrPredicate(sPredicate.Or, index)
+		return parseAndPredicate(example, predD)
+	} else if len(predD.Or) != 0 {
+		return parseOrPredicate(example, predD)
 	}
 	return nil, errors.New("empty Predicate")
 }
 
 // ParseAndPredicate parses the ANDs of a Predicate.
-func ParseAndPredicate(andPredicates []*Predicate, index *Index) (query.Query, error) {
-	var ands []query.Query
-	for _, Predicate := range andPredicates {
-		q, err := ParsePredicate(Predicate, index)
+func parseAndPredicate(example interface{}, andPredicate *PredicateDescriptor) (internalPredicate, error) {
+	var ands []internalPredicate
+	for _, pred := range andPredicate.And {
+		q, err := parsePredicate(example, pred)
 		if err != nil {
 			return nil, err
 		}
 		ands = append(ands, q)
 	}
+	if len(ands) == 0 {
+		return nil, errors.New("empty CONJUNCTION predicate encountered")
+	}
 	if len(ands) == 1 {
 		return ands[0], nil
 	}
-	return bleve.NewConjunctionQuery(ands...), nil
+	return func(input reflect.Value) bool {
+		for _, a := range ands {
+			if pass := a(input); !pass {
+				return false
+			}
+		}
+		return true
+	}, nil
 }
 
-// ParseOrPredicate parses the ORs of a Predicate.
-func ParseOrPredicate(orPredicates []*Predicate, index *Index) (query.Query, error) {
-	var ors []query.Query
-	for _, Predicate := range orPredicates {
-		q, err := ParsePredicate(Predicate, index)
+func parseOrPredicate(example interface{}, orPredicate *PredicateDescriptor) (internalPredicate, error) {
+	var ors []internalPredicate
+	for _, pred := range orPredicate.Or{
+		q, err := parsePredicate(example, pred)
 		if err != nil {
 			return nil, err
 		}
 		ors = append(ors, q)
 	}
+	if len(ors) == 0 {
+		return nil, errors.New("empty DISJUNCTION predicate encountered")
+	}
 	if len(ors) == 1 {
 		return ors[0], nil
 	}
-	return bleve.NewDisjunctionQuery(ors...), nil
-}
-
-// ParseBasePredicate parses a string formatted, single field, query.
-func ParseBasePredicate(basePredicate string, index *Index) (query.Query, error) {
-	fixes := strings.SplitN(basePredicate, ":", 2)
-	if len(fixes) != 2 {
-		return nil, fmt.Errorf("Predicate must have a field and value with ':' in between: %s", basePredicate)
-	}
-	for _, doc := range index.Documents {
-		if fType, hasField := doc.Fields[fixes[0]]; hasField {
-			return parsePredicateOfType(fixes[0], fixes[1], fType)
+	return func(input reflect.Value) bool {
+		for _, a := range ors {
+			if pass := a(input); pass {
+				return true
+			}
 		}
-	}
-	return nil, fmt.Errorf("cannot find indexed field: %s", fixes[0])
+		return false
+	}, nil
 }
 
-// Helper functions for parsing a string query.
-///////////////////////////////////////////////
+func parseFieldPredicate(example interface{}, pred *PredicateDescriptor) (internalPredicate, error) {
+	child, err := parsePredicate(example, pred.Field.Descriptor)
+	if err != nil {
+		return nil, err
+	}
+	return func(input reflect.Value) bool {
+		steps := strings.Split(pred.Field.Path, ".")
+		for _, step := range steps {
+			input.F
+		}
+		return child(v)
+	}, nil
+}
 
-func parsePredicateOfType(prefix, suffix string, fType FType) (query.Query, error) {
+func parseBasePredicate(example interface{}, prefix, suffix string, fType FieldType) (internalPredicate, error) {
 	switch fType {
-	case TEXT_FTYPE:
+	case STRING_FIELD:
 		return parseTextPredicate(prefix, suffix)
-	case KEYWORD_FTYPE:
+	case URI_FIELD:
 		return parseKeywordPredicate(prefix, suffix)
-	case KEYWORD_LIST_FTYPE:
+	case NUMERICAL_FIELD:
 		return parseKeywordPredicate(prefix, suffix)
-	case NUMBER_FTYPE:
+	case DATETIME_FIELD:
 		return parseNumberPredicate(prefix, suffix)
-	case DATE_FTYPE:
+	case BOOLEAN_FIELD:
 		return parseDatePredicate(prefix, suffix)
 	default:
-		return nil, fmt.Errorf("cannot handle Predicate of type %d", fType)
+		return nil, fmt.Errorf("cannot handle field of type %d", fType)
 	}
 }
 
-func parseTextPredicate(prefix, suffix string) (query.Query, error) {
+func parseTextPredicate(prefix, suffix string) (internalPredicate, error) {
 	mq := bleve.NewMatchQuery(suffix)
 	mq.SetField(prefix)
 	return mq, nil
 }
 
-func parseKeywordPredicate(prefix, suffix string) (query.Query, error) {
+func parseKeywordPredicate(prefix, suffix string) (internalPredicate, error) {
 	mq := bleve.NewMatchQuery(suffix)
 	mq.SetField(prefix)
 	return mq, nil
 }
 
-func parseNumberPredicate(prefix, suffix string) (query.Query, error) {
+func parseNumberPredicate(prefix, suffix string) (internalPredicate, error) {
 	if strings.HasPrefix(suffix, "==") {
 		num, err := parseNum(strings.TrimPrefix(suffix, "=="))
 		if err != nil {
@@ -208,7 +215,7 @@ func parseNum(strNum string) (float64, error) {
 	return num, err
 }
 
-func parseDatePredicate(prefix, suffix string) (query.Query, error) {
+func parseDatePredicate(prefix, suffix string) (internalPredicate, error) {
 	if strings.HasPrefix(suffix, "==") {
 		num, err := parseDate(strings.TrimPrefix(suffix, "=="))
 		if err != nil {
