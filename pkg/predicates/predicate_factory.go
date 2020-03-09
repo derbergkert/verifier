@@ -33,7 +33,7 @@ type predicateFactoryImpl struct {
 }
 
 func (pf *predicateFactoryImpl) Build(d *PredicateDescriptor) (Predicate, error) {
-	internal, err :=  parsePredicate(pf.example, d)
+	internal, err :=  parsePredicate("", pf.example, d)
 	if err != nil {
 		return nil, err
 	}
@@ -42,38 +42,32 @@ func (pf *predicateFactoryImpl) Build(d *PredicateDescriptor) (Predicate, error)
 	}, nil
 }
 
-// ParsePredicates converts a Predicate object into an executable function which takes in a JSON object and returns
-// an error message if the input object matched the predicate, which describes the matching fields.
-func parsePredicate(example interface{}, predD *PredicateDescriptor) (internalPredicate, error) {
+
+func parsePredicate(currentPath string, currentExample interface{}, predD *PredicateDescriptor) (internalPredicate, error) {
 	if predD == nil {
 		return nil, errors.New("received a nil descriptor")
 	}
-
 	if predD.Field != nil {
-		return parseFieldPredicate(example, predD)
+		return parseFieldPredicate(currentPath, currentExample, predD)
 	} else if len(predD.And) != 0 {
-		if predD.Or != nil {
-			return nil, errors.New("Predicate should be of a single type")
-		}
-		return parseAndPredicate(example, predD)
+		return parseAndPredicate(currentPath, currentExample, predD)
 	} else if len(predD.Or) != 0 {
-		return parseOrPredicate(example, predD)
+		return parseOrPredicate(currentPath, currentExample, predD)
 	}
-	return nil, errors.New("empty Predicate")
+	return nil, errors.New(fmt.Sprintf("empty descriptor at path %s", currentPath))
 }
 
-// ParseAndPredicate parses the ANDs of a Predicate.
-func parseAndPredicate(example interface{}, andPredicate *PredicateDescriptor) (internalPredicate, error) {
+func parseAndPredicate(currentPath string, currentExample interface{}, andPredicate *PredicateDescriptor) (internalPredicate, error) {
 	var ands []internalPredicate
 	for _, pred := range andPredicate.And {
-		q, err := parsePredicate(example, pred)
+		q, err := parsePredicate(currentPath, currentExample, pred)
 		if err != nil {
 			return nil, err
 		}
 		ands = append(ands, q)
 	}
 	if len(ands) == 0 {
-		return nil, errors.New("empty CONJUNCTION predicate encountered")
+		return nil, errors.New(fmt.Sprintf("empty conjunction predicate encountered at path %s", currentPath))
 	}
 	if len(ands) == 1 {
 		return ands[0], nil
@@ -88,17 +82,17 @@ func parseAndPredicate(example interface{}, andPredicate *PredicateDescriptor) (
 	}, nil
 }
 
-func parseOrPredicate(example interface{}, orPredicate *PredicateDescriptor) (internalPredicate, error) {
+func parseOrPredicate(currentPath string, currentExample interface{}, orPredicate *PredicateDescriptor) (internalPredicate, error) {
 	var ors []internalPredicate
 	for _, pred := range orPredicate.Or{
-		q, err := parsePredicate(example, pred)
+		q, err := parsePredicate(currentPath, currentExample, pred)
 		if err != nil {
 			return nil, err
 		}
 		ors = append(ors, q)
 	}
 	if len(ors) == 0 {
-		return nil, errors.New("empty DISJUNCTION predicate encountered")
+		return nil, errors.New(fmt.Sprintf("empty disjunction predicate encountered at path %s", currentPath))
 	}
 	if len(ors) == 1 {
 		return ors[0], nil
@@ -113,18 +107,34 @@ func parseOrPredicate(example interface{}, orPredicate *PredicateDescriptor) (in
 	}, nil
 }
 
-func parseFieldPredicate(example interface{}, pred *PredicateDescriptor) (internalPredicate, error) {
-	child, err := parsePredicate(example, pred.Field.Descriptor)
+func parseFieldPredicate(currentPath string, currentExample interface{}, pred *PredicateDescriptor) (internalPredicate, error) {
+	newPath, newExample, extractor, err := fieldExtractor(currentPath, currentExample, pred.Field.Path)
+	if err != nil {
+		return nil, err
+	}
+	child, err := parsePredicate(newPath, newExample, pred.Field.Descriptor)
 	if err != nil {
 		return nil, err
 	}
 	return func(input reflect.Value) bool {
-		steps := strings.Split(pred.Field.Path, ".")
-		for _, step := range steps {
-			input.F
-		}
-		return child(v)
+		return child(extractor(input))
 	}, nil
+}
+
+func fieldExtractor(currentPath string, currentExample interface{}, jsonPath string) (string, interface{}, func(reflect.Value) reflect.Value, error) {
+	steps := strings.Split(jsonPath, ".")
+	if len(steps) == 0 {
+		return "", nil, nil, errors.New(fmt.Sprintf("empty json path for field after: %s", currentPath))
+	}
+	for _, step := range steps {
+		currType := reflect.TypeOf(currentExample)
+		for fieldIndex := 0; fieldIndex < currType.NumField(); fieldIndex++ {
+			currField := currType.FieldByIndex(fieldIndex)
+			jsonTags := currField.
+		}
+		currentPath = fmt.Sprintf("%s.%s", currentPath, step)
+	}
+	return currentPath, nil, nil, nil
 }
 
 func parseBasePredicate(example interface{}, prefix, suffix string, fType FieldType) (internalPredicate, error) {
