@@ -1,12 +1,8 @@
-package get
+package ping
 
 import (
-	"github.com/theonlyrob/vercer/webserver/services/predicate/notifier"
-	"github.com/theonlyrob/vercer/webserver/services/predicate/store"
 	"net/http"
 	"sync"
-
-	userStore "github.com/theonlyrob/vercer/webserver/services/user/store"
 )
 
 var (
@@ -43,11 +39,9 @@ func SingletonValidator() Validator {
 
 func initialize() {
 	authorizer = NewAuthorizer(store.Singleton(), userStore.Singleton())
-	validator = NewValidator(store.Singleton())
+	validator = NewValidator()
 	handler = NewHandler(
 		authorizer,
 		validator,
-		store.Singleton(),
-		notifier.Singleton(),
 	)
 }

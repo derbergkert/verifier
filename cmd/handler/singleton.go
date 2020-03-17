@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	globalinterceptor "github.com/theonlyrob/vercer/webserver/cmd/interceptor"
-	predicateAPI "github.com/theonlyrob/vercer/webserver/services/predicate/api"
+	livenessService "github.com/theonlyrob/vercer/webserver/services/liveness"
 
 	// Add more APIs you want to register here.
 )
@@ -43,7 +43,7 @@ func registerAPI(mux *http.ServeMux) {
 	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", apiMux))
 
 	// Attach individual APIs.
-	predicateMux := http.NewServeMux()
-	apiMux.Handle("/predicates/", http.StripPrefix("/predicates", predicateMux))
-	predicateAPI.Register(predicateMux)
+	livenessMux := http.NewServeMux()
+	apiMux.Handle("/liveness/", http.StripPrefix("/liveness", livenessMux))
+	livenessService.Register(livenessMux)
 }

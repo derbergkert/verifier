@@ -28,8 +28,7 @@ type errorObject struct {
 
 func Error(w http.ResponseWriter, error string, code int) error {
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(&errorObject{
+	return json.NewEncoder(w).Encode(&errorObject{
 		error: error,
 	})
-	return nil
 }

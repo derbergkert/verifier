@@ -1,9 +1,9 @@
-package get
+package ping
 
 import (
 	"context"
 	"errors"
-	"github.com/theonlyrob/vercer/webserver/services/predicate/store"
+	"github.com/theonlyrob/vercer/webserver/services/liveness/store"
 
 	identityContext "github.com/theonlyrob/vercer/webserver/pkg/identity/context"
 	userStore "github.com/theonlyrob/vercer/webserver/services/user/store"

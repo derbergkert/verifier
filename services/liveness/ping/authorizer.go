@@ -1,8 +1,8 @@
-package get
+package ping
 
 import (
 	"context"
-	"github.com/theonlyrob/vercer/webserver/services/predicate/store"
+	"github.com/theonlyrob/vercer/webserver/services/liveness/store"
 
 	userStore "github.com/theonlyrob/vercer/webserver/services/user/store"
 )
